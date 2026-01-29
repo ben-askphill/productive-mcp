@@ -1,0 +1,6 @@
+# This project uses Node.js/TypeScript, not Python.
+# See package.json for dependencies.
+#
+# To install: npm install
+# To build: npm run build
+# To run: npm start
