@@ -91,6 +91,75 @@ async function listProjects(
   return result;
 }
 
+async function getProject(projectId: string): Promise<string> {
+  const error = checkConfig();
+  if (error) return `Configuration error: ${error}`;
+
+  const params = new URLSearchParams({
+    include: "company,project_manager",
+  });
+
+  const response = await fetch(`${BASE_URL}/projects/${projectId}?${params}`, {
+    headers: getHeaders(),
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      return `Project with ID ${projectId} not found.`;
+    }
+    return `Error fetching project: ${response.status} - ${await response.text()}`;
+  }
+
+  const data = await response.json();
+  const project = data.data;
+  const attrs = project.attributes || {};
+
+  // Build included lookup
+  const included: Record<string, any> = {};
+  for (const i of data.included || []) {
+    included[`${i.type}:${i.id}`] = i;
+  }
+
+  // Get company name
+  const companyRel = project.relationships?.company?.data;
+  let companyName = "";
+  if (companyRel) {
+    const companyKey = `${companyRel.type}:${companyRel.id}`;
+    if (included[companyKey]) {
+      companyName = included[companyKey].attributes?.name || "Unknown";
+    }
+  }
+
+  // Get project manager name
+  const pmRel = project.relationships?.project_manager?.data;
+  let pmName = "";
+  if (pmRel) {
+    const pmKey = `${pmRel.type}:${pmRel.id}`;
+    if (included[pmKey]) {
+      const pm = included[pmKey].attributes || {};
+      pmName = `${pm.first_name || ""} ${pm.last_name || ""}`.trim() || "Unknown";
+    }
+  }
+
+  let result = `**Project: ${attrs.name || "Unnamed"}**\n\n`;
+  result += `- **ID:** ${project.id}\n`;
+  if (companyName) result += `- **Company:** ${companyName}\n`;
+  if (pmName) result += `- **Project Manager:** ${pmName}\n`;
+  if (attrs.project_number) result += `- **Project Number:** ${attrs.project_number}\n`;
+  if (attrs.status !== undefined) {
+    const statusText = attrs.status === 1 ? "Active" : attrs.status === 2 ? "Archived" : `Status ${attrs.status}`;
+    result += `- **Status:** ${statusText}\n`;
+  }
+  if (attrs.budget_total) result += `- **Budget Total:** ${attrs.budget_total}\n`;
+  if (attrs.billable !== undefined) result += `- **Billable:** ${attrs.billable ? "Yes" : "No"}\n`;
+  if (attrs.started_at) result += `- **Started:** ${attrs.started_at}\n`;
+  if (attrs.ended_at) result += `- **Ended:** ${attrs.ended_at}\n`;
+
+  result += `\nUse \`list_deals\` with search to find deals/budgets for this project.`;
+
+  return result;
+}
+
 async function listDeals(search?: string): Promise<string> {
   const error = checkConfig();
   if (error) return `Configuration error: ${error}`;
@@ -573,6 +642,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "get_project",
+        description:
+          "Get detailed information about a specific project by ID. Returns project details including company, project manager, status, and budget info.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project_id: {
+              type: "string",
+              description: "The ID of the project to retrieve",
+            },
+          },
+          required: ["project_id"],
+        },
+      },
+      {
         name: "list_deals",
         description:
           "List deals (budgets/contracts) from Productive. Use this to find the deal ID, then use list_services with the deal_id to find services to log time against.",
@@ -747,6 +831,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           (args?.status as string) || "active",
           args?.search as string | undefined
         );
+        break;
+
+      case "get_project":
+        result = await getProject(args?.project_id as string);
         break;
 
       case "list_deals":
